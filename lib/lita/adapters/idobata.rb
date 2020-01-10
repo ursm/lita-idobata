@@ -5,7 +5,6 @@ module Lita
   module Adapters
     class Idobata < Adapter
       config :api_token
-      config :pusher_key,  default: '44ffe67af1c7035be764'
       config :idobata_url, default: 'https://idobata.io'
       config :debug,       default: false
 
@@ -13,7 +12,6 @@ module Lita
         super
         @connector = Connector.new(robot,
           api_token:   adapter_config.api_token,
-          pusher_key:  adapter_config.pusher_key,
           idobata_url: adapter_config.idobata_url,
           debug:       adapter_config.debug,
         )

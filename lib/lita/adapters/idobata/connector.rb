@@ -1,7 +1,7 @@
 # require 'lita/acapters/idobata/callback'
 
 require "lita/idobata/version"
-require 'pusher-client'
+require 'ld-eventsource'
 require 'faraday'
 require 'json'
 
@@ -11,10 +11,9 @@ module Lita
       class Connector
         attr_reader :robot, :client, :roster
 
-        def initialize(robot, api_token: nil, pusher_key: nil, idobata_url: nil, debug: false)
+        def initialize(robot, api_token: nil, idobata_url: nil, debug: false)
           @robot       = robot
           @api_token   = api_token
-          @pusher_key  = pusher_key
           @idobata_url = idobata_url
           @debug       = debug
           Lita.logger.info("Enabling log.") if @debug
@@ -23,36 +22,31 @@ module Lita
         def connect
           raise "api_token is requeired." unless @api_token
 
-          response = http_client.get '/api/seed'
-          seed = JSON.parse(response.body)
-          @bot = seed['records']['bot']
-          channel_name = @bot['channel_name']
+          SSE::Client.new "#{@idobata_url}/api/stream?access_token=#{@api_token}", logger: ::Logger.new($stdout) do |stream|
+            bot_id = nil
 
-          options = {
-            encrypted: !!@idobata_url.match(/^https/),
-            auth_method: auth_method
-          }
-          socket = PusherClient::Socket.new(@pusher_key, options)
-          socket.connect(true)
-          socket.bind('pusher:connection_established') do
-            socket.subscribe(channel_name, user_id: @bot['id'])
-          end
+            stream.on_event do |ev|
+              case ev.type
+              when :seed
+                seed   = JSON.parse(ev.data, symbolize_names: true)
+                bot_id = seed[:records][:bot][:id]
+              when :event
+                event = JSON.parse(ev.data, symbolize_names: true)
 
-          socket.bind('message:created') do |data|
-            message = JSON.parse(data)["message"]
-            if message["sender_id"] != @bot['id']
-              user    = find_user(*message.values_at('sender_id', 'sender_name', 'sender_type'))
-              source  = Source.new(user: user, room: message["room_id"].to_s)
-              # `message["body_plain"]` is nil on image upload
-              message = Message.new(robot, message["body_plain"].to_s, source)
-              robot.receive(message)
+                next unless event[:type] == 'message:created'
+
+                message = event[:data][:message]
+
+                next if message[:sender_type] == 'bot' && message[:sender_id] == bot_id
+
+                user    = find_user(*message.values_at(:sender_id, :sender_name, :sender_type))
+                source  = Source.new(user: user, room: message[:room_id].to_s)
+                # `message["body_plain"]` is nil on image upload
+                message = Message.new(robot, message[:body_plain].to_s, source)
+
+                robot.receive message
+              end
             end
-          end
-
-          socket.bind('pusher:error') do |data|
-            socket.disconnect
-            sleep 5
-            connect
           end
         end
 
@@ -78,21 +72,14 @@ module Lita
           User.find_by_id(id) || User.create(id, name: name)
         end
 
-        def auth_method
-          -> (socket_id, channel) {
-            response = http_client.post "/pusher/auth", { channel_name: channel.name, socket_id: socket_id }
-            json = JSON.parse(response.body)
-            json["auth"]
-          }
-        end
-
         def http_client
           @conn ||= Faraday.new(url: @idobata_url) do |faraday|
             faraday.request  :url_encoded             # form-encode POST params
             faraday.response :logger                  # log requests to STDOUT
             faraday.adapter  Faraday.default_adapter  # make requests with Net::HTTP
-            faraday.headers['X-API-Token']  = @api_token
-            faraday.headers['User-Agent']   = "lita-idobata / v#{Lita::Idobata::VERSION}"
+
+            faraday.headers['Authorization'] = "Bearer #{@api_token}"
+            faraday.headers['User-Agent']    = "lita-idobata / v#{Lita::Idobata::VERSION}"
           end
         end
       end

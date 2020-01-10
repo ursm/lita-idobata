@@ -21,7 +21,7 @@ Gem::Specification.new do |spec|
 
   spec.add_runtime_dependency "lita", ">= 4.0"
   spec.add_runtime_dependency 'faraday', '~> 0.9.0'
-  spec.add_runtime_dependency 'pusher-client', '~> 0.6.0'
+  spec.add_runtime_dependency 'ld-eventsource', '~> 1.0.0'
 
   spec.add_development_dependency "bundler"
   spec.add_development_dependency "rake"
